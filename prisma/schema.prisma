@@ -1,0 +1,140 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Merchant {
+  id               String   @id @default(cuid())
+  businessName     String
+  email            String   @unique
+  paystackSecretKey String  // store encrypted at the app layer, never plain
+  paystackPublicKey String?
+  createdAt        DateTime @default(now())
+
+  customers        Customer[]
+  transactions     Transaction[]
+  paymentLinks     PaymentLink[]
+  apiKeys          ApiKey[]
+  webhookEndpoints WebhookEndpoint[]
+}
+
+model Customer {
+  id                String   @id @default(cuid())
+  merchantId        String
+  merchant          Merchant @relation(fields: [merchantId], references: [id])
+  paystackCustomerId String? @unique
+  email             String
+  name              String?
+  phone             String?
+  createdAt         DateTime @default(now())
+
+  transactions      Transaction[]
+
+  @@unique([merchantId, email])
+  @@index([merchantId])
+}
+
+model PaymentLink {
+  id             String   @id @default(cuid())
+  merchantId     String
+  merchant       Merchant @relation(fields: [merchantId], references: [id])
+  paystackPageId String?  @unique
+  slug           String   @unique
+  name           String
+  amountKobo     Int?     // null = flexible amount
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  transactions   Transaction[]
+
+  @@index([merchantId])
+}
+
+model Transaction {
+  id                String       @id @default(cuid())
+  merchantId        String
+  merchant          Merchant     @relation(fields: [merchantId], references: [id])
+  customerId        String?
+  customer          Customer?    @relation(fields: [customerId], references: [id])
+  paymentLinkId     String?
+  paymentLink       PaymentLink? @relation(fields: [paymentLinkId], references: [id])
+  paystackReference String       @unique
+  amountKobo        Int
+  currency          String       @default("NGN")
+  status            String       // pending | success | failed | abandoned
+  channel           String?      // card | bank | ussd | ...
+  paidAt            DateTime?
+  createdAt         DateTime     @default(now())
+
+  refunds           Refund[]
+
+  @@index([merchantId, status])
+  @@index([merchantId, createdAt])
+}
+
+model Refund {
+  id               String      @id @default(cuid())
+  merchantId       String
+  transactionId    String
+  transaction      Transaction @relation(fields: [transactionId], references: [id])
+  paystackRefundId String?     @unique
+  amountKobo       Int
+  reason           String?
+  status           String      // pending | processed | failed
+  createdAt        DateTime    @default(now())
+
+  @@index([merchantId])
+}
+
+model ApiKey {
+  id         String   @id @default(cuid())
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id])
+  name       String   // e.g. "Production key"
+  hashedKey  String   @unique // never store the raw key
+  prefix     String   // short visible prefix shown in the UI, e.g. "mk_live_ab12"
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([merchantId])
+}
+
+model WebhookEndpoint {
+  id         String   @id @default(cuid())
+  merchantId String
+  merchant   Merchant @relation(fields: [merchantId], references: [id])
+  url        String
+  secret     String   // used to sign outgoing payloads
+  events     String[] // e.g. ["transaction.success", "refund.processed"]
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  deliveries WebhookEventLog[]
+
+  @@index([merchantId])
+}
+
+model WebhookEventLog {
+  id         String          @id @default(cuid())
+  endpointId String
+  endpoint   WebhookEndpoint @relation(fields: [endpointId], references: [id])
+  eventType  String
+  payload    Json
+  status     String          // pending | delivered | failed
+  attempts   Int             @default(0)
+  createdAt  DateTime        @default(now())
+
+  @@index([endpointId, status])
+}
+
+// Dedup log for incoming Paystack webhooks (idempotency guard)
+model PaystackWebhookLog {
+  id           String   @id @default(cuid())
+  paystackEventId String @unique
+  eventType    String
+  processedAt  DateTime @default(now())
+}
