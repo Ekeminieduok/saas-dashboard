@@ -1,0 +1,3 @@
+[build]
+  base = "."
+  command = "corepack enable && pnpm run build"
